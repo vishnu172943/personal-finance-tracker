@@ -15,7 +15,7 @@ const { promisify } = require('util');
 
 // ---------------------- Config ----------------------
 const PORT = process.env.PORT || 3000;
-const MONGO_URL = process.env.MONGO_URL || 'mongodb://127.0.0.1:27017';
+const MONGO_URL = process.env.MONGO_URL || 'mongodb+srv://vishnureddy2048_db_user:DrVADoeSPuqg6DkO@cluster0.ce0zcoh.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0';
 const DB_NAME = process.env.DB_NAME || 'personal_finance_tracker';
 
 const COOKIE_NAME = 'sid';
@@ -864,12 +864,16 @@ const html = `<!doctype html>
 
     async function deleteTx(id){
       if(!confirm('Delete this transaction?')) return;
-      await api('/api/transactions/'+id, { method:'DELETE' });
-      toast('Transaction deleted', 'success');
-      await loadAll();
+      try {
+        await api('/api/transactions/'+id, { method:'DELETE' });
+        toast('Deleted successfully');
+        await loadTransactions(); // Only reload transactions instead of full loadAll
+      } catch (err) {
+        toast(err.message || 'Failed to delete', 'error');
+      }
     }
 
-    function enterEdit(id){
+    function enterEdit(id) {
       const tr = document.querySelector('tr[data-id="'+id+'"]');
       if(!tr) return;
       const cells = tr.children;
@@ -877,6 +881,10 @@ const html = `<!doctype html>
       const typeText = cells[1].textContent.trim();
       const catText = cells[2].textContent.trim();
       const amtValue = Number(cells[3].textContent.replace(/[^0-9.-]/g,''));
+
+      // Save original row content
+      const originalContent = tr.innerHTML;
+      
       tr.innerHTML='';
       const dateInput=document.createElement('input'); dateInput.type='date'; dateInput.value = new Date(dateISO).toISOString().slice(0,10);
       const typeSel=document.createElement('select'); typeSel.innerHTML='<option value="income">income</option><option value="expense">expense</option>'; typeSel.value=typeText;
@@ -894,17 +902,56 @@ const html = `<!doctype html>
       actions.appendChild(save); actions.appendChild(cancel);
       tr.appendChild(actions);
 
-      cancel.onclick = () => loadTransactions();
+      // Restore row on cancel or error
+      const restoreRow = () => {
+        tr.innerHTML = originalContent;
+      };
+
+      cancel.onclick = restoreRow;
+      
       save.onclick = async () => {
-        const payload = {
-          amount: parseFloat(amtInput.value),
-          type: typeSel.value,
-          category: catInput.value,
-          date: dateInput.value
-        };
-        await api('/api/transactions/'+id, { method:'PUT', body: JSON.stringify(payload) });
-        toast('Transaction updated', 'success');
-        await loadAll();
+        try {
+          save.disabled = true;
+          cancel.disabled = true;
+
+          const amount = parseFloat(amtInput.value);
+          if (isNaN(amount) || amount < 0) {
+            throw new Error('Invalid amount');
+          }
+          const category = catInput.value.trim();
+          if (!category) {
+            throw new Error('Category is required');
+          }
+          const date = dateInput.value;
+          if (!date) {
+            throw new Error('Date is required');
+          }
+
+          const payload = {
+            amount,
+            type: typeSel.value,
+            category,
+            date
+          };
+          
+          const response = await api('/api/transactions/'+id, { 
+            method: 'PUT',
+            body: JSON.stringify(payload)
+          });
+          
+          if (!response._id) {
+            throw new Error('Invalid server response');
+          }
+
+          toast('Saved successfully');
+          await loadTransactions();
+          
+        } catch (err) {
+          save.disabled = false;
+          cancel.disabled = false;
+          toast(err.message || 'Failed to save', 'error');
+          restoreRow();
+        }
       };
 
       function wrap(elm){ const td=document.createElement('td'); td.appendChild(elm); return td; }
